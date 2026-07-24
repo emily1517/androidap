@@ -9,23 +9,22 @@ on:
 
 jobs:
   appium-chrome-deviceinfo:
-    # macOS runners expose hardware acceleration for the Android emulator,
-    # which is far faster/more reliable in CI than software emulation on
-    # Linux runners.
-    #
-    # IMPORTANT: GitHub's macos-14 (and later) runners are Apple Silicon
-    # (ARM64) machines. An x86_64 Android system image cannot be
-    # hardware-accelerated on an ARM64 host, which makes the emulator fail
-    # to boot at all (adb sits forever reporting "device not found"). The
-    # image architecture below (arm64-v8a) must match the runner's CPU.
-    runs-on: macos-14
+    # Ubuntu is the reliable choice here. GitHub-hosted macOS runners
+    # (macos-13 Intel and macos-14+ Apple Silicon) do NOT expose real
+    # hardware/nested virtualization to the runner VM, so the Android
+    # emulator cannot boot on them at all (adb reports "device not found"
+    # forever, on either x86_64 or arm64-v8a images). GitHub-hosted Linux
+    # runners DO expose /dev/kvm, so the emulator gets real hardware
+    # acceleration there once KVM access is granted (see the "Enable KVM"
+    # step below) — this is the current standard, documented approach.
+    runs-on: ubuntu-latest
 
     env:
       # API 33 = Android 13 (a full/stable release, not a beta).
       # pixel_6_pro = a real, current Pixel device profile.
       ANDROID_API_LEVEL: 33
       ANDROID_DEVICE_PROFILE: pixel_6_pro
-      ANDROID_ARCH: arm64-v8a   # must match macos-14's Apple Silicon CPU
+      ANDROID_ARCH: x86_64   # Linux runners are x86_64
 
     steps:
       - name: Checkout repository
@@ -46,6 +45,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      # Grants the runner user access to /dev/kvm so the emulator gets
+      # real hardware acceleration instead of falling back to (very slow
+      # and frequently timing-out) software emulation.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
 
       - name: Install Appium and the UiAutomator2 driver
         run: |
