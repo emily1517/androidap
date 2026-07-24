@@ -1,0 +1,103 @@
+name: Appium Android - Chrome - deviceinfo.me
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  appium-chrome-deviceinfo:
+    # macOS runners expose hardware acceleration for the Android emulator,
+    # which is far faster/more reliable in CI than software emulation on
+    # Linux runners.
+    runs-on: macos-14
+
+    env:
+      # API 33 = Android 13 (a full/stable release, not a beta).
+      # pixel_6_pro = a real, current Pixel device profile.
+      ANDROID_API_LEVEL: 33
+      ANDROID_DEVICE_PROFILE: pixel_6_pro
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Appium and the UiAutomator2 driver
+        run: |
+          npm install -g appium
+          appium driver install uiautomator2
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Start Appium server in the background
+        run: |
+          appium --base-path /wd/hub --log appium.log &
+          npx wait-on tcp:4723
+
+      - name: Run Android emulator, capture device info, launch Chrome -> deviceinfo.me
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.ANDROID_API_LEVEL }}
+          target: google_apis          # image with Google apps / Chrome preinstalled
+          arch: x86_64
+          profile: ${{ env.ANDROID_DEVICE_PROFILE }}
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            mkdir -p artifacts
+            echo "===== Full Android / device properties (adb getprop) =====" > artifacts/device_info.txt
+            adb shell getprop ro.product.manufacturer  | sed 's/^/Manufacturer: /'      >> artifacts/device_info.txt
+            adb shell getprop ro.product.brand         | sed 's/^/Brand: /'             >> artifacts/device_info.txt
+            adb shell getprop ro.product.model         | sed 's/^/Model: /'             >> artifacts/device_info.txt
+            adb shell getprop ro.product.device        | sed 's/^/Device codename: /'   >> artifacts/device_info.txt
+            adb shell getprop ro.build.version.release | sed 's/^/Android version: /'   >> artifacts/device_info.txt
+            adb shell getprop ro.build.version.sdk     | sed 's/^/API level: /'         >> artifacts/device_info.txt
+            adb shell getprop ro.build.version.security_patch | sed 's/^/Security patch: /' >> artifacts/device_info.txt
+            adb shell getprop ro.build.id              | sed 's/^/Build ID: /'          >> artifacts/device_info.txt
+            adb shell getprop ro.build.fingerprint     | sed 's/^/Build fingerprint: /' >> artifacts/device_info.txt
+            adb shell getprop ro.product.cpu.abi       | sed 's/^/CPU ABI: /'           >> artifacts/device_info.txt
+            echo "" >> artifacts/device_info.txt
+            cat artifacts/device_info.txt
+
+            python tests/test_launch_chrome.py
+
+      - name: Upload deviceinfo.me screenshot and device details
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deviceinfo-results
+          path: |
+            artifacts/deviceinfo_screenshot.png
+            artifacts/appium_session_capabilities.json
+            artifacts/device_info.txt
+          if-no-files-found: warn
+
+      - name: Upload Appium server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appium-log
+          path: appium.log
+          if-no-files-found: ignore
