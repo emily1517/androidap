@@ -12,6 +12,12 @@ jobs:
     # macOS runners expose hardware acceleration for the Android emulator,
     # which is far faster/more reliable in CI than software emulation on
     # Linux runners.
+    #
+    # IMPORTANT: GitHub's macos-14 (and later) runners are Apple Silicon
+    # (ARM64) machines. An x86_64 Android system image cannot be
+    # hardware-accelerated on an ARM64 host, which makes the emulator fail
+    # to boot at all (adb sits forever reporting "device not found"). The
+    # image architecture below (arm64-v8a) must match the runner's CPU.
     runs-on: macos-14
 
     env:
@@ -19,6 +25,7 @@ jobs:
       # pixel_6_pro = a real, current Pixel device profile.
       ANDROID_API_LEVEL: 33
       ANDROID_DEVICE_PROFILE: pixel_6_pro
+      ANDROID_ARCH: arm64-v8a   # must match macos-14's Apple Silicon CPU
 
     steps:
       - name: Checkout repository
@@ -48,7 +55,7 @@ jobs:
       - name: Install Python test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r tests/requirements.txt
 
       - name: Start Appium server in the background
         run: |
@@ -60,12 +67,15 @@ jobs:
         with:
           api-level: ${{ env.ANDROID_API_LEVEL }}
           target: google_apis          # image with Google apps / Chrome preinstalled
-          arch: x86_64
+          arch: ${{ env.ANDROID_ARCH }}
           profile: ${{ env.ANDROID_DEVICE_PROFILE }}
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
+          emulator-boot-timeout: 900
           script: |
+            echo "===== adb devices ====="
+            adb devices -l
             mkdir -p artifacts
             echo "===== Full Android / device properties (adb getprop) =====" > artifacts/device_info.txt
             adb shell getprop ro.product.manufacturer  | sed 's/^/Manufacturer: /'      >> artifacts/device_info.txt
@@ -81,7 +91,7 @@ jobs:
             echo "" >> artifacts/device_info.txt
             cat artifacts/device_info.txt
 
-            python test_launch_chrome.py
+            python tests/test_launch_chrome.py
 
       - name: Upload deviceinfo.me screenshot and device details
         if: always()
